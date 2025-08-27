@@ -5,7 +5,8 @@ package openjpeg_go
 /*
 #cgo CFLAGS: -Iinclude -O2 -fomit-frame-pointer
 #cgo linux LDFLAGS: ${SRCDIR}/include/linux/libopenjp2.a
-#cgo darwin LDFLAGS: ${SRCDIR}/include/darwin/libopenjp2.a
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/include/darwin/libopenjp2.a
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/include/darwin_arm64/libopenjp2.a
 #cgo windows LDFLAGS: ${SRCDIR}/include/win/libopenjp2.a
 #ifndef OPJ_STATIC
 #define OPJ_STATIC
@@ -82,7 +83,7 @@ func (c *codec) parseHeader(config *image.Config) (ok bool) {
 	format := C.OPJ_CODEC_FORMAT(C.OPJ_CODEC_JPT)
 	if bytes.Equal(c.magic[:], rfc3745Magic) || bytes.Equal(c.magic[:4], jp2Magic) {
 		format = C.OPJ_CODEC_JP2
-	} else if bytes.Equal(c.magic[:2], j2kMagic) {
+	} else if bytes.Equal(c.magic[:4], j2kMagic) {
 		format = C.OPJ_CODEC_J2K
 	}
 	c.codec = C.opj_create_decompress(format)
@@ -127,9 +128,9 @@ func (c *codec) comp(i int) *C.opj_image_comp_t {
 	return &((*[math.MaxInt32]C.opj_image_comp_t)(unsafe.Pointer(c.image.comps)))[i]
 }
 
-func (c *C.opj_image_comp_t) Data() []int32 {
-	return (*[math.MaxInt32]int32)(unsafe.Pointer(c.data))[:]
-}
+//func (c *C.opj_image_comp_t) Data() []int32 {
+//	return (*[math.MaxInt32]int32)(unsafe.Pointer(c.data))[:]
+//}
 
 func (c *codec) getSSR() (ssr image.YCbCrSubsampleRatio) {
 	ssr = YCbCrSubsampleRatioUnknown
@@ -146,7 +147,22 @@ func (c *codec) getSSR() (ssr image.YCbCrSubsampleRatio) {
 	return VHDiv2SSR(int(c1.dy), int(c1.dx))
 }
 
-func (c *C.opj_image_comp_t) encodeComp(buf []byte, pixelStride, stride int) {
+//func (c *C.opj_image_comp_t) encodeComp(buf []byte, pixelStride, stride int) {
+//	d := uintptr(unsafe.Pointer(c.data))
+//	shr := uint(8-c.prec) & 7
+//	dbuf := uintptr(unsafe.Pointer(&buf[0]))
+//	xw := uintptr(c.w) * uintptr(pixelStride)
+//	for y := 0; y < int(c.h); y++ {
+//		for i, j := uintptr(0), uintptr(0); i < xw; i += uintptr(pixelStride) {
+//			*((*uint32)(unsafe.Pointer(d + j))) = uint32(*(*byte)(unsafe.Pointer(dbuf + i))) >> shr
+//			j += 4
+//		}
+//		d += uintptr(c.w * 4)
+//		dbuf += uintptr(stride)
+//	}
+//}
+
+func encodeComp(c *C.opj_image_comp_t, buf []byte, pixelStride, stride int) {
 	d := uintptr(unsafe.Pointer(c.data))
 	shr := uint(8-c.prec) & 7
 	dbuf := uintptr(unsafe.Pointer(&buf[0]))
@@ -161,7 +177,32 @@ func (c *C.opj_image_comp_t) encodeComp(buf []byte, pixelStride, stride int) {
 	}
 }
 
-func (c *C.opj_image_comp_t) decodeComp(buf []byte, pixelStride int) {
+//
+//func (c *C.opj_image_comp_t) decodeComp(buf []byte, pixelStride int) {
+//
+//	var shl, shr uint
+//	// TODO: 16bit variants?
+//	if c.prec < 8 {
+//		shl = uint(8 - c.prec)
+//	} else if c.prec > 8 {
+//		shr = uint(c.prec - 8)
+//	}
+//
+//	d := uintptr(unsafe.Pointer(c.data))
+//	var sig uint32
+//	if c.sgnd != 0 {
+//		sig = (1 << (c.prec - 1)) - 1
+//	}
+//	shr &= 31
+//	shl &= 31
+//	dbuf := uintptr(unsafe.Pointer(&buf[0]))
+//	for i, j := uintptr(0), uintptr(0); i < uintptr(len(buf)); i += uintptr(pixelStride) {
+//		*(*byte)(unsafe.Pointer(dbuf + i)) = byte((*(*uint32)(unsafe.Pointer(d + j)) + sig) >> shr << shl)
+//		j += 4
+//	}
+//}
+
+func decodeComp(c *C.opj_image_comp_t, buf []byte, pixelStride int) {
 
 	var shl, shr uint
 	// TODO: 16bit variants?
@@ -197,9 +238,12 @@ func (c *codec) decode() (img image.Image) {
 		}
 		pic := image.NewRGBA(image.Rect(0, 0, int(c.image.x1), int(c.image.y1)))
 		pix := pic.Pix
-		c.comp(0).decodeComp(pix, 4)
-		c.comp(1).decodeComp(pix[1:], 4)
-		c.comp(2).decodeComp(pix[2:], 4)
+		///c.comp(0).decodeComp(pix, 4)
+		//c.comp(1).decodeComp(pix[1:], 4)
+		//c.comp(2).decodeComp(pix[2:], 4)
+		decodeComp(c.comp(0), pix, 4)
+		decodeComp(c.comp(1), pix[1:], 4)
+		decodeComp(c.comp(2), pix[2:], 4)
 		for i := 3; i < len(pix); i += 4 {
 			pix[i] = 0xff
 		}
@@ -236,9 +280,12 @@ func (c *codec) decode() (img image.Image) {
 			return
 		}
 		pic := image.NewYCbCr(image.Rect(0, 0, int(c.image.x1), int(c.image.y1)), ssr)
-		c.comp(0).decodeComp(pic.Y, 1)
-		c.comp(1).decodeComp(pic.Cr, 1)
-		c.comp(2).decodeComp(pic.Cb, 1)
+		//c.comp(0).decodeComp(pic.Y, 1)
+		//c.comp(1).decodeComp(pic.Cr, 1)
+		//c.comp(2).decodeComp(pic.Cb, 1)
+		decodeComp(c.comp(0), pic.Y, 1)
+		decodeComp(c.comp(1), pic.Cr, 1)
+		decodeComp(c.comp(2), pic.Cb, 1)
 		img = pic
 	case C.OPJ_CLRSPC_CMYK:
 		if c.image.numcomps < 4 {
@@ -246,10 +293,14 @@ func (c *codec) decode() (img image.Image) {
 		}
 		pic := image.NewCMYK(image.Rect(0, 0, int(c.image.x1), int(c.image.y1)))
 		pix := pic.Pix
-		c.comp(0).decodeComp(pix, 4)
-		c.comp(1).decodeComp(pix[1:], 4)
-		c.comp(2).decodeComp(pix[2:], 4)
-		c.comp(3).decodeComp(pix[3:], 4)
+		//c.comp(0).decodeComp(pix, 4)
+		//c.comp(1).decodeComp(pix[1:], 4)
+		//c.comp(2).decodeComp(pix[2:], 4)
+		//c.comp(3).decodeComp(pix[3:], 4)
+		decodeComp(c.comp(0), pix, 4)
+		decodeComp(c.comp(1), pix[1:], 4)
+		decodeComp(c.comp(2), pix[2:], 4)
+		decodeComp(c.comp(3), pix[3:], 4)
 		img = pic
 	default:
 		return
@@ -322,23 +373,34 @@ func (c *codec) encode(img image.Image, o *Options) (ok bool) {
 	switch cspc {
 	case C.OPJ_CLRSPC_GRAY:
 		ig := img.(*image.Gray)
-		c.comp(0).encodeComp(ig.Pix, 1, ig.Stride)
+		//c.comp(0).encodeComp(ig.Pix, 1, ig.Stride)
+		encodeComp(c.comp(0), ig.Pix, 1, ig.Stride)
 	case C.OPJ_CLRSPC_SRGB:
 		ig := img.(*image.RGBA)
-		c.comp(0).encodeComp(ig.Pix, 4, ig.Stride)
-		c.comp(1).encodeComp(ig.Pix[1:], 4, ig.Stride)
-		c.comp(2).encodeComp(ig.Pix[2:], 4, ig.Stride)
+		//c.comp(0).encodeComp(ig.Pix, 4, ig.Stride)
+		///c.comp(1).encodeComp(ig.Pix[1:], 4, ig.Stride)
+		//c.comp(2).encodeComp(ig.Pix[2:], 4, ig.Stride)
+		encodeComp(c.comp(0), ig.Pix, 4, ig.Stride)
+		encodeComp(c.comp(1), ig.Pix[1:], 4, ig.Stride)
+		encodeComp(c.comp(2), ig.Pix[2:], 4, ig.Stride)
 	case C.OPJ_CLRSPC_CMYK:
 		ig := img.(*image.CMYK)
-		c.comp(0).encodeComp(ig.Pix, 4, ig.Stride)
-		c.comp(1).encodeComp(ig.Pix[1:], 4, ig.Stride)
-		c.comp(2).encodeComp(ig.Pix[2:], 4, ig.Stride)
-		c.comp(2).encodeComp(ig.Pix[3:], 4, ig.Stride)
+		//c.comp(0).encodeComp(ig.Pix, 4, ig.Stride)
+		//c.comp(1).encodeComp(ig.Pix[1:], 4, ig.Stride)
+		//c.comp(2).encodeComp(ig.Pix[2:], 4, ig.Stride)
+		//c.comp(2).encodeComp(ig.Pix[3:], 4, ig.Stride)
+		encodeComp(c.comp(0), ig.Pix, 4, ig.Stride)
+		encodeComp(c.comp(1), ig.Pix[1:], 4, ig.Stride)
+		encodeComp(c.comp(2), ig.Pix[2:], 4, ig.Stride)
+		encodeComp(c.comp(3), ig.Pix[3:], 4, ig.Stride)
 	case C.OPJ_CLRSPC_SYCC:
 		ig := img.(*image.YCbCr)
-		c.comp(0).encodeComp(ig.Y, 1, ig.YStride)
-		c.comp(1).encodeComp(ig.Cb, 1, ig.CStride)
-		c.comp(2).encodeComp(ig.Cr, 1, ig.CStride)
+		//c.comp(0).encodeComp(ig.Y, 1, ig.YStride)
+		//c.comp(1).encodeComp(ig.Cb, 1, ig.CStride)
+		//c.comp(2).encodeComp(ig.Cr, 1, ig.CStride)
+		encodeComp(c.comp(0), ig.Y, 1, ig.YStride)
+		encodeComp(c.comp(1), ig.Cb, 1, ig.CStride)
+		encodeComp(c.comp(2), ig.Cr, 1, ig.CStride)
 	}
 	var par C.opj_cparameters_t
 	c.codec = C.opj_create_compress(C.OPJ_CODEC_JP2)

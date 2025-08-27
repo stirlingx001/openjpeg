@@ -34,7 +34,7 @@ func main() {
 		".tiff": func(w io.Writer, i image.Image) error { return tiff.Encode(w, i, nil) },
 		".webp": func(w io.Writer, i image.Image) error { return webp.Encode(w, i, nil) },
 	}
-	in, err := os.Open("jp2.jp2")
+	in, err := os.Open("image.j2k")
 	if err != nil {
 		logs.Error(err)
 		fmt.Scanln()
